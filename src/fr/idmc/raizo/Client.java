@@ -79,9 +79,11 @@ public class Client extends Thread {
                     if (readyCommand.equals("READY")) {
                         out.write("OK\n".getBytes(StandardCharsets.UTF_8));
                         out.flush();
-                        clientReadyMap.put(clientSocket, true); // Mettre à jour le clientReadyMap pour ce client spécifique
+                        clientReadyMap.put(clientSocket, true);
+                        // Mettre à jour le clientReadyMap pour ce client spécifique
                     } else {
                         client.close();
+                        clientReadyMap.remove(client);
                         break; // Sortir de la boucle si le client envoie autre chose que "READY"
                     }
                 }

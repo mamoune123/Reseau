@@ -6,12 +6,18 @@ import java.io.OutputStream;
 import java.net.*;
 import java.nio.charset.*;
 import java.util.*;
-
+import java.util.Map.Entry;
 
 import fr.idmc.raizo.*;
 public class Launcher {
 	private ServerSocket serverSocket;
     static Map<Socket,Boolean> clientReadyMap = new HashMap<>();
+    static Map<Socket, Worker> clientWorkerMap = new HashMap<>();
+    
+    
+ // Nouvelle liste pour stocker les travailleurs
+
+    
 	    public void run() throws Exception {
 	         
 	    	
@@ -23,12 +29,13 @@ public class Launcher {
 	    	        return; 
 	    	    }	    	
 	    	
-	    	CommandProcessor commandProcessor = new CommandProcessor();
+	    	 CommandProcessor commandProcessor = new CommandProcessor();
 	         Thread commandProcessorThread = new Thread(commandProcessor);//gestion des commandes CLI avec des threads pour permettre au serveur de communique en parallele avec d'autres threads socket client 
 	         commandProcessorThread.start();
 	         while (true) {
 	 	    	Socket client = serverSocket.accept();
 	 	    	Client c = new Client(client, clientReadyMap);
+	 	    	
 	 	    	clientReadyMap.put(client,false);
 	 	    	c.start();
 	 	    	}
@@ -51,21 +58,60 @@ public class Launcher {
 	            }
 	        }
 	    }
+	
+	    private void broadcastMessage(String message) {
+	        for (Socket clientSocket : clientReadyMap.keySet()) {
+	            try {
+	                OutputStream out = clientSocket.getOutputStream();
+	                out.write((message + "\n").getBytes(StandardCharsets.UTF_8));
+	                out.flush();
+	            } catch (IOException e) {
+	                e.printStackTrace();
+	            }
+	        }
+	    }
+	   
+
+	
+	    
     private boolean processCommand(String cmd) throws Exception {
         if(("quit").equals(cmd)) {
             // TODO shutdown
-        	 for (Socket clientSocket : clientReadyMap.keySet()) {
-        	        clientSocket.close();
-        	    }
-        	serverSocket.close();
-            return false;
-        }
+        	 Map<Socket, Worker> clientWorkerMapCopy = new HashMap<>(clientWorkerMap);
+             Map<Socket, Boolean> clientReadyMapCopy = new HashMap<>(clientReadyMap);
+
+             // Stopper tous les workers
+             for (Worker worker : clientWorkerMapCopy.values()) {
+                 worker.stopWorker();
+             }
+
+             // Fermer toutes les connexions client
+             for (Socket clientSocket : clientReadyMapCopy.keySet()) {
+                 try {
+                     clientSocket.close();
+                 } catch (IOException e) {
+                     e.printStackTrace();
+                 }
+             }
+
+             // Fermer le serveur
+             try {
+                 serverSocket.close();
+             } catch (IOException e) {
+                 e.printStackTrace();
+             }
+
+             return false;
+         }
         
         if(("cancel").equals(cmd)) {
-            // TODO cancel task
+        	for (Worker worker : clientWorkerMap.values()) {
+                worker.stopWorker();
+            }
 
         } else if(("status").equals(cmd)) {
-            // TODO show workers status
+        	System.out.println(clientReadyMap);
+            System.out.println(clientWorkerMap);
 
         } else if(("help").equals(cmd.trim())) {
             System.out.println(" • status - display informations about connected workers");
@@ -76,11 +122,7 @@ public class Launcher {
             System.out.println(" • quit - terminate pending work and quit");
 
                 
-        } else if(("show").equals(cmd.trim())) {
-            System.out.println(clientReadyMap);
-   
-        }
-            else if(cmd.startsWith("solve")) {
+        } else if(cmd.startsWith("solve")) {
             // TODO start solving ...
             	 int readyClientsCount = 0;
                  for (boolean isReady : clientReadyMap.values()) {
@@ -89,7 +131,14 @@ public class Launcher {
                      }
                  }
             int difficulty = Integer.parseInt(cmd.substring(6).trim());
-            String result = WebService.generateWork(difficulty); // Afficher le résultat  
+            String result = WebService.generateWork(difficulty);
+            
+            if ("SOLVED".equals(result)) {
+            	broadcastMessage("DIFFICULTY ALREADY SOLVED");
+            	
+            }
+            else {
+            // Afficher le résultat  
             int nonce = 0;
             for (Map.Entry<Socket, Boolean> entry : clientReadyMap.entrySet()) {
                 Socket clientSocket = entry.getKey();
@@ -100,14 +149,44 @@ public class Launcher {
                     out.write(("PAYLOAD " + result + "\n").getBytes(StandardCharsets.UTF_8)); // le payload avec le resultat
                     out.write(("SOLVE " + difficulty + "\n").getBytes(StandardCharsets.UTF_8));
                     out.write(("NONCE " + nonce + " " + readyClientsCount + "\n").getBytes(StandardCharsets.UTF_8));
-                    
                     out.flush();
+                    Worker w = new Worker(result, difficulty, nonce, clientReadyMap,clientSocket);
+                    w.start();
+                    clientWorkerMap.put(clientSocket, w);
                     nonce++;
-                    
+                 
                 }
             }
 
         }
+            }
+            else if (("progress").equals(cmd.trim())) {
+                for (Entry<Socket, Worker> entry : clientWorkerMap.entrySet()) {
+                    Socket clientSocket = entry.getKey();
+                    Worker worker = entry.getValue();
+                    OutputStream out = clientSocket.getOutputStream();
+                    try {
+                        // Afficher le statut du worker
+                        out.write(("Worker running status: " + worker.isRunning() + "\n").getBytes(StandardCharsets.UTF_8));
+
+                        // Si le worker est en cours d'exécution, afficher le nonce testé
+                        if (worker.isRunning()) {
+                            String nonceTested = worker.current_nonce();
+                            out.write(("TESTING... " + nonceTested + "\n").getBytes(StandardCharsets.UTF_8));
+                        } else {
+                            // Si le worker n'est pas en cours d'exécution, afficher NOPE
+                   
+                                out.write("NOPE\n".getBytes(StandardCharsets.UTF_8));
+                          
+                        }
+                        out.flush();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+       
+            
         
         return true;
     }
