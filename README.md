@@ -1,4 +1,4 @@
-# Projet Réseau-rs
+# Projet FlyinSquade
 
 Ce projet met en œuvre un système de minage distribué basé sur une architecture client-serveur. Le serveur distribue les tâches de minage aux clients (workers) connectés, qui effectuent les calculs nécessaires et renvoient les résultats au serveur pour validation.
 
